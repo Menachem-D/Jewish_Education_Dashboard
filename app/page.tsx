@@ -1,65 +1,99 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useState, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
+import { MapRecord, LayerFilters, MapStats } from '@/types/map-record';
+import CommandSidebar from '@/components/sidebar/CommandSidebar';
+import DetailPanel from '@/components/DetailPanel';
+
+const DispatchMap = dynamic(() => import('@/components/map/DispatchMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center bg-slate-900">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs text-slate-500 tracking-wider uppercase">
+          Initializing map
+        </span>
+      </div>
+    </div>
+  ),
+});
+
+const DEFAULT_LAYER_FILTERS: LayerFilters = {
+  synagogue: true,
+  day_school: true,
+  head_shliach: true,
+  population: true,
+};
+
+export default function DashboardPage() {
+  const [records, setRecords] = useState<MapRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<MapRecord | null>(null);
+  const [layerFilters, setLayerFilters] = useState<LayerFilters>(DEFAULT_LAYER_FILTERS);
+  const [flyToTarget, setFlyToTarget] = useState<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/map-records')
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<MapRecord[]>;
+      })
+      .then(setRecords)
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const visible = records.filter((r) => layerFilters[r.layer_type]);
+
+  const stats: MapStats = {
+    total: records.length,
+    visible: visible.length,
+    synagogues: records.filter((r) => r.layer_type === 'synagogue').length,
+    daySchools: records.filter((r) => r.layer_type === 'day_school').length,
+    headShluchim: records.filter((r) => r.layer_type === 'head_shliach').length,
+    populationCities: records.filter((r) => r.layer_type === 'population').length,
+  };
+
+  const handleSelect = useCallback((rec: MapRecord) => {
+    setSelectedRecord(rec);
+    setFlyToTarget({ lat: rec.latitude, lng: rec.longitude });
+  }, []);
+
+  const handleClose = useCallback(() => setSelectedRecord(null), []);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="flex h-screen overflow-hidden bg-slate-900 text-slate-100">
+      <CommandSidebar
+        stats={stats}
+        layerFilters={layerFilters}
+        onLayerFiltersChange={setLayerFilters}
+        records={visible}
+        onSelectRecord={handleSelect}
+        selectedId={selectedRecord?.id}
+        loading={loading}
+      />
+
+      <div className="flex-1 relative overflow-hidden">
+        {error && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-red-900/80 border border-red-700 text-red-200 text-xs px-3 py-1.5 rounded-full shadow-lg">
+            Data error: {error}
+          </div>
+        )}
+
+        <DispatchMap
+          records={visible}
+          onSelectRecord={handleSelect}
+          selectedId={selectedRecord?.id}
+          flyToTarget={flyToTarget}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+
+        {selectedRecord && (
+          <DetailPanel record={selectedRecord} onClose={handleClose} />
+        )}
+      </div>
     </div>
   );
 }
