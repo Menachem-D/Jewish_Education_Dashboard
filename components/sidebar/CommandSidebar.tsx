@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, List } from 'lucide-react';
+import Link from 'next/link';
+import { ChevronDown, ChevronRight, List, Users } from 'lucide-react';
 import {
   MapRecord,
   LayerFilters,
@@ -23,7 +24,7 @@ interface CommandSidebarProps {
   loading: boolean;
 }
 
-const LAYER_ORDER: LayerType[] = ['synagogue', 'day_school', 'head_shliach', 'population'];
+const LAYER_ORDER: LayerType[] = ['synagogue', 'day_school', 'head_shliach', 'population', 'family'];
 
 function SectionHeader({
   title,
@@ -81,6 +82,7 @@ export default function CommandSidebar({
       day_school: value,
       head_shliach: value,
       population: value,
+      family: value,
     });
   }
 
@@ -262,6 +264,17 @@ export default function CommandSidebar({
             )}
           </div>
         )}
+      </div>
+
+      {/* CRM link */}
+      <div className="shrink-0 border-t border-slate-700/40 px-3 py-2.5">
+        <Link
+          href="/crm"
+          className="flex items-center gap-2 text-[10px] text-slate-500 hover:text-slate-300 transition-colors group"
+        >
+          <Users className="w-3.5 h-3.5 group-hover:text-blue-400" />
+          <span className="uppercase tracking-wider">Family CRM</span>
+        </Link>
       </div>
     </div>
   );

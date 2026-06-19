@@ -1,5 +1,13 @@
 @import 'tailwindcss';
 
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+.crm-panel-enter {
+  animation: slide-in-right 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* ── MapLibre control overrides ── */
 .maplibregl-ctrl-bottom-right {
   bottom: 8px !important;

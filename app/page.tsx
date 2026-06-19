@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { MapRecord, LayerFilters, MapStats } from '@/types/map-record';
 import CommandSidebar from '@/components/sidebar/CommandSidebar';
 import DetailPanel from '@/components/DetailPanel';
+import FamilyMapPanel from '@/components/FamilyMapPanel';
 
 const DispatchMap = dynamic(() => import('@/components/map/DispatchMap'), {
   ssr: false,
@@ -25,10 +26,12 @@ const DEFAULT_LAYER_FILTERS: LayerFilters = {
   day_school: true,
   head_shliach: true,
   population: true,
+  family: false,
 };
 
 export default function DashboardPage() {
   const [records, setRecords] = useState<MapRecord[]>([]);
+  const [familyRecords, setFamilyRecords] = useState<MapRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<MapRecord | null>(null);
@@ -46,7 +49,29 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // When the family layer is enabled, fetch geocoded families and trigger background geocoding
+  useEffect(() => {
+    if (!layerFilters.family) return;
+
+    const fetchFamilies = () =>
+      fetch('/api/crm/map-families')
+        .then((r) => r.json() as Promise<MapRecord[]>)
+        .then(setFamilyRecords)
+        .catch(() => {});
+
+    fetchFamilies();
+
+    // Geocode any families missing coordinates; refresh pins if new ones were geocoded
+    fetch('/api/crm/geocode-batch', { method: 'POST' })
+      .then((r) => r.json())
+      .then(({ geocoded }: { geocoded: number }) => {
+        if (geocoded > 0) fetchFamilies();
+      })
+      .catch(() => {});
+  }, [layerFilters.family]);
+
   const visible = records.filter((r) => layerFilters[r.layer_type]);
+  const allVisible = layerFilters.family ? [...visible, ...familyRecords] : visible;
 
   const stats: MapStats = {
     total: records.length,
@@ -70,7 +95,7 @@ export default function DashboardPage() {
         stats={stats}
         layerFilters={layerFilters}
         onLayerFiltersChange={setLayerFilters}
-        records={visible}
+        records={allVisible}
         onSelectRecord={handleSelect}
         selectedId={selectedRecord?.id}
         loading={loading}
@@ -84,15 +109,21 @@ export default function DashboardPage() {
         )}
 
         <DispatchMap
-          records={visible}
+          records={allVisible}
           onSelectRecord={handleSelect}
           selectedId={selectedRecord?.id}
           flyToTarget={flyToTarget}
         />
 
-        {selectedRecord && (
+        {selectedRecord?.layer_type === 'family' && selectedRecord.family_record_id ? (
+          <FamilyMapPanel
+            key={selectedRecord.id}
+            familyId={selectedRecord.family_record_id}
+            onClose={handleClose}
+          />
+        ) : selectedRecord ? (
           <DetailPanel record={selectedRecord} onClose={handleClose} />
-        )}
+        ) : null}
       </div>
     </div>
   );

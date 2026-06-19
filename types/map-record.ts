@@ -1,4 +1,4 @@
-export type LayerType = 'synagogue' | 'day_school' | 'head_shliach' | 'population';
+export type LayerType = 'synagogue' | 'day_school' | 'head_shliach' | 'population' | 'family';
 
 export interface MapRecord {
   id: string;
@@ -16,6 +16,7 @@ export interface MapRecord {
   population?: number;
   notes?: string;
   raw?: Record<string, string>;
+  family_record_id?: string; // links family pins back to the CRM record
 }
 
 export interface LayerFilters {
@@ -23,6 +24,7 @@ export interface LayerFilters {
   day_school: boolean;
   head_shliach: boolean;
   population: boolean;
+  family: boolean;
 }
 
 export interface MapStats {
@@ -39,6 +41,7 @@ export const LAYER_COLORS: Record<string, string> = {
   day_school: '#22C55E',
   head_shliach: '#8B5CF6',
   population: '#F97316',
+  family: '#EC4899',
 };
 
 export const LAYER_LABELS: Record<LayerType, string> = {
@@ -46,4 +49,5 @@ export const LAYER_LABELS: Record<LayerType, string> = {
   day_school: 'Day School',
   head_shliach: 'Head Shliach',
   population: 'Population',
+  family: 'Families (CRM)',
 };

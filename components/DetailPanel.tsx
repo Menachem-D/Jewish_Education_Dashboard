@@ -1,27 +1,44 @@
 'use client';
 
-import { X, MapPin, Mail, Phone, Globe, ExternalLink as LinkIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  X,
+  MapPin,
+  Mail,
+  Phone,
+  Globe,
+  ExternalLink as LinkIcon,
+  Loader2,
+} from 'lucide-react';
 import { MapRecord, LAYER_COLORS, LAYER_LABELS } from '@/types/map-record';
-import { cn } from '@/lib/utils';
+import PopupButton from '@/components/ui/PopupButton';
 
 interface DetailPanelProps {
   record: MapRecord;
   onClose: () => void;
 }
 
-function Field({
-  label,
-  value,
-}: {
-  label: string;
-  value?: string | number | null;
-}) {
+interface EnrichedData {
+  website: string | null;
+  phone: string | null;
+  address: string | null;
+  rabbi_director: string | null;
+  founded: string | null;
+  description: string | null;
+}
+
+interface EnrichResult {
+  data: EnrichedData | null;
+  sources: { title: string; url: string }[];
+  skipped?: boolean;
+  error?: string;
+}
+
+function Field({ label, value }: { label: string; value?: string | number | null }) {
   if (value == null || value === '') return null;
   return (
     <div>
-      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">
-        {label}
-      </div>
+      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">{label}</div>
       <div className="text-xs text-slate-200">{value}</div>
     </div>
   );
@@ -52,6 +69,19 @@ function ContactRow({
   );
 }
 
+/** Build truepeoplesearch URL from record name + location. */
+function buildPersonSearchUrl(record: MapRecord): string {
+  const clean = record.name
+    .replace(/^(Rabbi|Rebbetzin|Dr\.|Mr\.|Mrs\.|Rev\.)\s+/i, '')
+    .trim();
+  const loc = [record.city, record.state_province].filter(Boolean).join(' ');
+  return (
+    `https://www.truepeoplesearch.com/results` +
+    `?name=${encodeURIComponent(clean)}` +
+    `&citystatezip=${encodeURIComponent(loc)}`
+  );
+}
+
 export default function DetailPanel({ record, onClose }: DetailPanelProps) {
   const color = LAYER_COLORS[record.layer_type] ?? '#94A3B8';
   const location = [record.city, record.state_province, record.country]
@@ -59,6 +89,52 @@ export default function DetailPanel({ record, onClose }: DetailPanelProps) {
     .join(', ');
 
   const hasContacts = record.email || record.whatsapp;
+
+  const [enriching, setEnriching] = useState(false);
+  const [enrichResult, setEnrichResult] = useState<EnrichResult | null>(null);
+
+  useEffect(() => {
+    if (record.layer_type === 'population') return;
+
+    const controller = new AbortController();
+    setEnriching(true);
+    setEnrichResult(null);
+
+    fetch('/api/enrich', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: record.name,
+        city: record.city,
+        state_province: record.state_province,
+        country: record.country,
+        layer_type: record.layer_type,
+      }),
+      signal: controller.signal,
+    })
+      .then((res) => res.json() as Promise<EnrichResult>)
+      .then((result) => setEnrichResult(result))
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          setEnrichResult({ data: null, sources: [], error: 'Lookup failed' });
+        }
+      })
+      .finally(() => setEnriching(false));
+
+    return () => controller.abort();
+  }, [record.id]);
+
+  const enriched = enrichResult?.data;
+  const hasEnriched =
+    enriched && Object.values(enriched).some((v) => v != null && v !== '');
+
+  const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(
+    [record.name, record.city, record.state_province].filter(Boolean).join(' '),
+  )}`;
+
+  const facebookUrl = `https://www.facebook.com/search/top/?q=${encodeURIComponent(
+    [record.name, record.city].filter(Boolean).join(' '),
+  )}`;
 
   return (
     <div className="absolute top-0 right-0 h-full w-76 bg-slate-900/96 backdrop-blur-sm border-l border-slate-700/80 flex flex-col overflow-hidden z-10 shadow-2xl">
@@ -72,7 +148,6 @@ export default function DetailPanel({ record, onClose }: DetailPanelProps) {
             <h2 className="text-sm font-bold text-slate-100 leading-tight mb-1.5">
               {record.name}
             </h2>
-            {/* Layer type badge */}
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border leading-none"
               style={{
@@ -81,10 +156,7 @@ export default function DetailPanel({ record, onClose }: DetailPanelProps) {
                 borderColor: `${color}50`,
               }}
             >
-              <span
-                className="w-1.5 h-1.5 rounded-full"
-                style={{ backgroundColor: color }}
-              />
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
               {LAYER_LABELS[record.layer_type]}
             </span>
           </div>
@@ -119,10 +191,7 @@ export default function DetailPanel({ record, onClose }: DetailPanelProps) {
             <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-1.5">
               Jewish Population
             </p>
-            <div
-              className="text-2xl font-bold tabular-nums"
-              style={{ color }}
-            >
+            <div className="text-2xl font-bold tabular-nums" style={{ color }}>
               {record.population.toLocaleString()}
             </div>
           </div>
@@ -134,13 +203,11 @@ export default function DetailPanel({ record, onClose }: DetailPanelProps) {
             <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-1.5">
               Details
             </p>
-            <div className="space-y-2">
-              <Field label="Affiliation" value={record.affiliation} />
-            </div>
+            <Field label="Affiliation" value={record.affiliation} />
           </div>
         )}
 
-        {/* Contact info (Head Shluchim) */}
+        {/* Contact info */}
         {hasContacts && (
           <div className="px-4 py-3 border-b border-slate-800/80">
             <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-1.5">
@@ -175,7 +242,118 @@ export default function DetailPanel({ record, onClose }: DetailPanelProps) {
           </div>
         )}
 
-        {/* Raw fields (expandable debug view for unexpected columns) */}
+        {/* Web Info */}
+        {record.layer_type !== 'population' && (
+          <div className="px-4 py-3 border-b border-slate-800/80">
+            <div className="flex items-center gap-1.5 mb-2">
+              <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">
+                Web Info
+              </p>
+              {enriching && <Loader2 className="w-3 h-3 text-slate-600 animate-spin" />}
+            </div>
+
+            {enriching && (
+              <p className="text-[10px] text-slate-600 italic">Looking up online…</p>
+            )}
+
+            {!enriching && enrichResult?.error && (
+              <p className="text-[10px] text-slate-700 italic">{enrichResult.error}</p>
+            )}
+
+            {!enriching && hasEnriched && enriched && (
+              <div className="space-y-2">
+                {enriched.description && (
+                  <p className="text-xs text-slate-400 leading-relaxed">{enriched.description}</p>
+                )}
+                <div className="space-y-1.5 mt-1">
+                  <Field label="Rabbi / Director" value={enriched.rabbi_director} />
+                  <Field label="Address" value={enriched.address} />
+                  <Field label="Phone" value={enriched.phone} />
+                  <Field label="Founded" value={enriched.founded} />
+                </div>
+                {enriched.website && (
+                  <a
+                    href={enriched.website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 mt-1 group"
+                  >
+                    <Globe className="w-3.5 h-3.5 shrink-0 text-slate-500 group-hover:text-blue-400" />
+                    <span className="truncate group-hover:underline">{enriched.website}</span>
+                  </a>
+                )}
+                {enrichResult?.sources && enrichResult.sources.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-[10px] text-slate-700 cursor-pointer hover:text-slate-500 select-none">
+                      Sources ({enrichResult.sources.length})
+                    </summary>
+                    <div className="mt-1.5 space-y-1">
+                      {enrichResult.sources.map((s, i) => (
+                        <a
+                          key={i}
+                          href={s.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-start gap-1 text-[10px] text-slate-600 hover:text-slate-400 group"
+                        >
+                          <LinkIcon className="w-3 h-3 shrink-0 mt-0.5 group-hover:text-blue-400" />
+                          <span className="truncate">{s.title}</span>
+                        </a>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
+
+            {!enriching && !enrichResult?.error && enrichResult && !hasEnriched && (
+              <p className="text-[10px] text-slate-700 italic">No additional info found.</p>
+            )}
+          </div>
+        )}
+
+        {/* ── Quick Lookup — real browser popups, no bot risk ─────────── */}
+        {record.layer_type !== 'population' && (
+          <div className="px-4 py-3 border-b border-slate-800/80">
+            <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-2.5">
+              Quick Lookup
+            </p>
+            <div className="space-y-1.5">
+              {record.layer_type === 'head_shliach' && (
+                <PopupButton
+                  label="People Search"
+                  sublabel="truepeoplesearch.com"
+                  url={buildPersonSearchUrl(record)}
+                  color="#6366F1"
+                />
+              )}
+              {record.layer_type !== 'head_shliach' && enriched?.website && (
+                <PopupButton
+                  label="Official Website"
+                  sublabel={enriched.website}
+                  url={enriched.website}
+                  color="#22C55E"
+                />
+              )}
+              {record.layer_type !== 'head_shliach' && (
+                <PopupButton
+                  label="Facebook Search"
+                  sublabel={`"${record.name}"`}
+                  url={facebookUrl}
+                  color="#3B82F6"
+                />
+              )}
+              <PopupButton
+                label="Google Search"
+                sublabel={`${record.name}${record.city ? ` · ${record.city}` : ''}`}
+                url={googleUrl}
+                color="#94A3B8"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Raw fields */}
         {record.raw && Object.keys(record.raw).length > 0 && (
           <details className="px-4 py-3">
             <summary className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest cursor-pointer hover:text-slate-500 select-none">
@@ -186,9 +364,7 @@ export default function DetailPanel({ record, onClose }: DetailPanelProps) {
                 .filter(([, v]) => v)
                 .map(([k, v]) => (
                   <div key={k} className="flex gap-2 text-[10px]">
-                    <span className="text-slate-600 shrink-0 min-w-24 truncate">
-                      {k}
-                    </span>
+                    <span className="text-slate-600 shrink-0 min-w-24 truncate">{k}</span>
                     <span className="text-slate-400 truncate">{v}</span>
                   </div>
                 ))}

@@ -14,16 +14,68 @@ interface DispatchMapProps {
   flyToTarget?: { lat: number; lng: number } | null;
 }
 
-function markerSize(record: MapRecord, isSelected: boolean): number {
-  if (record.layer_type === 'population') {
-    const pop = record.population ?? 0;
-    if (pop === 0) return isSelected ? 16 : 10;
-    // Scale logarithmically: 1k→8px, 1M→24px
-    const size = Math.max(8, Math.min(28, (Math.log10(pop) - 2) * 8 + 8));
-    return isSelected ? size + 4 : size;
-  }
-  return isSelected ? 18 : 12;
+type MarkerEntry = { marker: maplibregl.Marker; el: HTMLElement; record: MapRecord };
+
+function createPinElement(rec: MapRecord): HTMLElement {
+  const color = LAYER_COLORS[rec.layer_type] ?? '#94A3B8';
+  const el = document.createElement('div');
+  el.style.cursor = 'pointer';
+  el.style.transition = 'filter 0.12s ease, opacity 0.12s ease';
+  el.setAttribute('aria-label', rec.name);
+  el.setAttribute('role', 'button');
+  el.dataset.pinType = 'location';
+  el.dataset.color = color;
+
+  el.style.filter = 'drop-shadow(0 1px 4px rgba(0,0,0,0.7))';
+  el.innerHTML = `<svg width="22" height="32" viewBox="0 0 22 32" xmlns="http://www.w3.org/2000/svg">
+    <path d="M11 0C4.925 0 0 4.925 0 11C0 19 11 32 11 32C11 32 22 19 22 11C22 4.925 17.075 0 11 0Z" fill="${color}"/>
+    <circle cx="11" cy="11" r="5" fill="white" opacity="0.9"/>
+  </svg>`;
+
+  return el;
 }
+
+function applySelectionStyle(el: HTMLElement, isSelected: boolean) {
+  const color = el.dataset.color ?? '#94A3B8';
+  el.style.filter = isSelected
+    ? `drop-shadow(0 0 6px ${color}cc) drop-shadow(0 2px 6px rgba(0,0,0,0.9))`
+    : 'drop-shadow(0 1px 4px rgba(0,0,0,0.7))';
+  el.style.zIndex = isSelected ? '10' : '';
+}
+
+function makePopGeoJson(recs: MapRecord[]): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: recs.map((r) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [r.longitude, r.latitude] },
+      properties: { weight: r.population ?? 1, name: r.name },
+    })),
+  };
+}
+
+const HEATMAP_PAINT: maplibregl.HeatmapLayerSpecification['paint'] = {
+  // Normalize weight: 0 → 0, 2 000 000 → 1
+  'heatmap-weight': ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 2000000, 1],
+  // Intensity scales with zoom for sharper detail when zoomed in
+  'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 0.6, 9, 2.5],
+  // Radius expands at higher zoom so clusters don't collapse
+  'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 28, 4, 44, 8, 64, 12, 80],
+  'heatmap-opacity': 0.88,
+  // Orange → amber → yellow → white colour ramp
+  'heatmap-color': [
+    'interpolate',
+    ['linear'],
+    ['heatmap-density'],
+    0,    'rgba(249,115,22,0)',
+    0.15, 'rgba(249,115,22,0.25)',
+    0.35, 'rgba(251,146,60,0.50)',
+    0.55, 'rgba(253,186,116,0.68)',
+    0.75, 'rgba(253,224,71,0.82)',
+    0.9,  'rgba(254,240,138,0.92)',
+    1,    'rgba(255,255,255,0.97)',
+  ],
+};
 
 export default function DispatchMap({
   records,
@@ -33,8 +85,13 @@ export default function DispatchMap({
 }: DispatchMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const markersRef = useRef<maplibregl.Marker[]>([]);
+  const markerMapRef = useRef<Map<string, MarkerEntry>>(new Map());
   const loadedRef = useRef(false);
+  const onSelectRef = useRef(onSelectRecord);
+  const selectedIdRef = useRef(selectedId);
+
+  useEffect(() => { onSelectRef.current = onSelectRecord; }, [onSelectRecord]);
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
 
   // Initialize map once
   useEffect(() => {
@@ -57,84 +114,112 @@ export default function DispatchMap({
       'bottom-left',
     );
 
-    map.on('load', () => {
-      loadedRef.current = true;
-    });
-
+    map.on('load', () => { loadedRef.current = true; });
     mapRef.current = map;
 
     return () => {
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
+      markerMapRef.current.forEach(({ marker }) => marker.remove());
+      markerMapRef.current.clear();
       map.remove();
       mapRef.current = null;
       loadedRef.current = false;
     };
   }, []);
 
-  // Rebuild markers when records or selection changes
+  // ── Population heatmap ────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    const addMarkers = () => {
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
+    const popRecs = records.filter((r) => r.layer_type === 'population');
+    const geojson = makePopGeoJson(popRecs);
 
-      records.forEach((rec) => {
-        const isSelected = rec.id === selectedId;
-        const color = LAYER_COLORS[rec.layer_type] ?? '#94A3B8';
-        const size = markerSize(rec, isSelected);
-        const isPopulation = rec.layer_type === 'population';
-
-        const el = document.createElement('div');
-        el.setAttribute('aria-label', rec.name);
-        el.setAttribute('role', 'button');
-        Object.assign(el.style, {
-          width: `${size}px`,
-          height: `${size}px`,
-          borderRadius: '50%',
-          backgroundColor: isPopulation ? `${color}55` : color,
-          border: isSelected
-            ? `2.5px solid #fff`
-            : isPopulation
-              ? `1.5px solid ${color}`
-              : '1.5px solid rgba(255,255,255,0.5)',
-          cursor: 'pointer',
-          boxShadow: isSelected
-            ? `0 0 0 3px ${color}50, 0 2px 8px rgba(0,0,0,0.7)`
-            : '0 1px 4px rgba(0,0,0,0.5)',
-          transition: 'transform 0.15s ease',
-          willChange: 'transform',
+    const apply = () => {
+      if (map.getSource('pop-heat')) {
+        (map.getSource('pop-heat') as maplibregl.GeoJSONSource).setData(geojson);
+        map.setLayoutProperty(
+          'pop-heat-layer',
+          'visibility',
+          popRecs.length > 0 ? 'visible' : 'none',
+        );
+      } else if (popRecs.length > 0) {
+        map.addSource('pop-heat', { type: 'geojson', data: geojson });
+        map.addLayer({
+          id: 'pop-heat-layer',
+          type: 'heatmap',
+          source: 'pop-heat',
+          paint: HEATMAP_PAINT,
         });
+      }
+    };
+
+    if (loadedRef.current) apply();
+    else map.once('load', apply);
+  }, [records]);
+
+  // ── Marker sync (non-population) ─────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Population records are handled by the heatmap layer above
+    const pinRecs = records.filter((r) => r.layer_type !== 'population');
+
+    const sync = () => {
+      const existing = markerMapRef.current;
+      const nextIds = new Set(pinRecs.map((r) => r.id));
+
+      // Remove markers no longer in the visible set
+      existing.forEach(({ marker }, id) => {
+        if (!nextIds.has(id)) {
+          marker.remove();
+          existing.delete(id);
+        }
+      });
+
+      // Add new markers
+      pinRecs.forEach((rec) => {
+        if (existing.has(rec.id)) return;
+
+        const el = createPinElement(rec);
+        applySelectionStyle(el, rec.id === selectedIdRef.current);
 
         el.addEventListener('mouseenter', () => {
-          el.style.transform = 'scale(1.35)';
+          if (rec.id !== selectedIdRef.current) {
+            const color = el.dataset.color ?? '#94A3B8';
+            el.style.filter = `drop-shadow(0 0 5px ${color}99) drop-shadow(0 1px 4px rgba(0,0,0,0.7))`;
+          }
         });
         el.addEventListener('mouseleave', () => {
-          el.style.transform = 'scale(1)';
+          if (rec.id !== selectedIdRef.current) {
+            el.style.filter = 'drop-shadow(0 1px 4px rgba(0,0,0,0.7))';
+          }
         });
         el.addEventListener('click', (e) => {
           e.stopPropagation();
-          onSelectRecord(rec);
+          onSelectRef.current(rec);
         });
 
-        const marker = new maplibregl.Marker({ element: el })
+        const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
           .setLngLat([rec.longitude, rec.latitude])
           .addTo(map);
 
-        markersRef.current.push(marker);
+        existing.set(rec.id, { marker, el, record: rec });
       });
     };
 
-    if (loadedRef.current) {
-      addMarkers();
-    } else {
-      map.once('load', addMarkers);
-    }
-  }, [records, selectedId, onSelectRecord]);
+    if (loadedRef.current) sync();
+    else map.once('load', sync);
+  }, [records]);
 
-  // Fly to target
+  // ── Selection style ───────────────────────────────────────────────────────
+  useEffect(() => {
+    markerMapRef.current.forEach(({ el, record }) => {
+      applySelectionStyle(el, record.id === selectedId);
+    });
+  }, [selectedId]);
+
+  // ── Fly to target ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!flyToTarget || !mapRef.current) return;
     mapRef.current.flyTo({
