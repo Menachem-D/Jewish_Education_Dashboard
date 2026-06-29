@@ -6,9 +6,10 @@ export interface Child {
   id: string;
   family_id: string;
   first_name: string;
-  birthday: string | null;   // YYYY-MM-DD full date
-  birth_year: number | null; // fallback when full date unknown
+  birthday: string | null;           // YYYY-MM-DD full date
+  birth_year: number | null;         // fallback when full date unknown
   gender: ChildGender | null;
+  bar_mitzvah_parsha: string | null; // parsha of their Bar/Bat Mitzvah
   notes: string | null;
   created_at: string;
 }
@@ -32,6 +33,7 @@ export interface Family {
   affiliation: string | null;
   notes: string | null;
   facebook_url: string | null;
+  labels: string[] | null;
   created_at: string;
   children: Child[];
 }

@@ -17,6 +17,27 @@ interface SyncStatus {
   groups?: ContactGroup[];
 }
 
+interface PreviewRow {
+  action: 'create' | 'update' | 'skip';
+  family_name: string;
+  father_first_name: string | null;
+  mother_first_name: string | null;
+  email: string | null;
+  phone: string | null;
+  city: string | null;
+  state_province: string | null;
+  patch?: Record<string, string>;
+  skip_reason?: string;
+}
+
+interface PreviewResult {
+  preview: PreviewRow[];
+  total: number;
+  created: number;
+  updated: number;
+  skipped: number;
+}
+
 interface SyncResult {
   created: number;
   updated: number;
@@ -43,7 +64,9 @@ function GoogleSyncInner() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [selectedGroup, setSelectedGroup] = useState('');
-  const [syncing, setSyncing] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState('');
 
@@ -64,23 +87,44 @@ function GoogleSyncInner() {
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
-  async function doSync() {
+  async function doPreview() {
     if (!selectedGroup) return;
-    setSyncing(true);
+    setPreviewing(true);
+    setPreview(null);
     setResult(null);
     setError('');
     try {
       const res = await fetch('/api/crm/google-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resourceName: selectedGroup }),
+        body: JSON.stringify({ resourceName: selectedGroup, dry_run: true }),
       });
-      if (!res.ok) throw new Error('Sync failed');
-      setResult(await res.json());
+      if (!res.ok) throw new Error('Preview failed');
+      setPreview(await res.json());
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Sync failed');
+      setError(e instanceof Error ? e.message : 'Preview failed');
     } finally {
-      setSyncing(false);
+      setPreviewing(false);
+    }
+  }
+
+  async function doConfirm() {
+    if (!selectedGroup) return;
+    setConfirming(true);
+    setError('');
+    try {
+      const res = await fetch('/api/crm/google-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resourceName: selectedGroup, dry_run: false }),
+      });
+      if (!res.ok) throw new Error('Import failed');
+      setResult(await res.json());
+      setPreview(null);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Import failed');
+    } finally {
+      setConfirming(false);
     }
   }
 
@@ -246,47 +290,116 @@ function GoogleSyncInner() {
                 )}
               </div>
 
-              {/* What happens info */}
-              <div className="text-[10px] text-slate-600 bg-slate-900/40 rounded-lg px-4 py-3 space-y-1">
-                <p className="font-medium text-slate-500">How sync works:</p>
-                <p>• Contacts matching an existing family by email or phone → fields are patched (empty fields only)</p>
-                <p>• New contacts → new families are created</p>
-                <p>• Your existing CRM data is never overwritten</p>
-              </div>
+              {/* Step 1 — Preview button */}
+              {!preview && !result && (
+                <>
+                  <div className="text-[10px] text-slate-600 bg-slate-900/40 rounded-lg px-4 py-3 space-y-1">
+                    <p className="font-medium text-slate-500">Nothing is saved until you confirm.</p>
+                    <p>• First, preview exactly which contacts will be created or updated</p>
+                    <p>• Then choose to import or cancel</p>
+                    <p>• Existing CRM data is never overwritten — only empty fields are filled in</p>
+                  </div>
+                  <button
+                    onClick={doPreview}
+                    disabled={!selectedGroup || previewing}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-semibold text-sm disabled:opacity-40 transition-colors"
+                  >
+                    {previewing ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" />Loading preview…</>
+                    ) : (
+                      <><RefreshCw className="w-4 h-4" />Preview contacts</>
+                    )}
+                  </button>
+                </>
+              )}
 
-              {/* Sync button */}
-              <button
-                onClick={doSync}
-                disabled={!selectedGroup || syncing}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm disabled:opacity-40 transition-colors"
-              >
-                {syncing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Syncing contacts…
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="w-4 h-4" />
-                    Sync selected label
-                  </>
-                )}
-              </button>
+              {/* Step 2 — Preview results + Confirm */}
+              {preview && !result && (
+                <div className="space-y-3">
+                  {/* Summary counts */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { label: 'Will create', value: preview.created, color: 'text-green-400', border: 'border-green-800/40' },
+                      { label: 'Will update', value: preview.updated, color: 'text-blue-400', border: 'border-blue-800/40' },
+                      { label: 'No change', value: preview.skipped, color: 'text-slate-500', border: 'border-slate-700' },
+                    ].map(({ label, value, color, border }) => (
+                      <div key={label} className={`bg-slate-900/60 border ${border} rounded-lg px-3 py-2 text-center`}>
+                        <div className={`text-lg font-bold tabular-nums ${color}`}>{value}</div>
+                        <div className="text-[10px] text-slate-600">{label}</div>
+                      </div>
+                    ))}
+                  </div>
 
-              {/* Sync error */}
-              {error && (
-                <div className="flex items-center gap-2 text-xs text-red-400 bg-red-900/20 border border-red-800/40 rounded-lg px-4 py-3">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  {error}
+                  {/* Contact list */}
+                  <div className="border border-slate-700/60 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                    {preview.preview.map((row, i) => (
+                      <div
+                        key={i}
+                        className={`flex items-start gap-3 px-3 py-2 border-b border-slate-800/60 last:border-0 text-xs ${
+                          row.action === 'create' ? 'bg-green-900/10' :
+                          row.action === 'update' ? 'bg-blue-900/10' : 'bg-transparent'
+                        }`}
+                      >
+                        <span className={`shrink-0 mt-0.5 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                          row.action === 'create' ? 'bg-green-900/50 text-green-400' :
+                          row.action === 'update' ? 'bg-blue-900/50 text-blue-400' :
+                          'bg-slate-800 text-slate-600'
+                        }`}>
+                          {row.action}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-slate-200 truncate">
+                            {[row.father_first_name, row.mother_first_name].filter(Boolean).join(' & ') || ''}
+                            {' '}{row.family_name}
+                          </div>
+                          <div className="text-[10px] text-slate-500 truncate">
+                            {[row.email, row.phone, [row.city, row.state_province].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}
+                          </div>
+                          {row.action === 'update' && row.patch && Object.keys(row.patch).length > 0 && (
+                            <div className="text-[10px] text-blue-400/70 truncate">
+                              Filling in: {Object.keys(row.patch).join(', ')}
+                            </div>
+                          )}
+                          {row.action === 'skip' && row.skip_reason && (
+                            <div className="text-[10px] text-slate-600 italic">{row.skip_reason}</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Confirm / Cancel */}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => setPreview(null)}
+                      className="flex-1 px-4 py-2.5 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600 font-semibold text-sm transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={doConfirm}
+                      disabled={confirming || (preview.created === 0 && preview.updated === 0)}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm disabled:opacity-40 transition-colors"
+                    >
+                      {confirming ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" />Importing…</>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-4 h-4" />
+                          Confirm import ({preview.created + preview.updated})
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {/* Sync result */}
+              {/* Step 3 — Done */}
               {result && (
                 <div className="bg-green-900/20 border border-green-800/40 rounded-xl p-4 space-y-2">
                   <div className="flex items-center gap-2 text-green-400 text-xs font-semibold">
                     <CheckCircle2 className="w-4 h-4" />
-                    Sync complete — {result.total} contact{result.total !== 1 ? 's' : ''} processed
+                    Import complete — {result.total} contact{result.total !== 1 ? 's' : ''} processed
                   </div>
                   <div className="grid grid-cols-3 gap-2 pt-1">
                     {[
@@ -300,12 +413,20 @@ function GoogleSyncInner() {
                       </div>
                     ))}
                   </div>
-                  <Link
-                    href="/crm"
-                    className="block text-center text-xs text-blue-400 hover:text-blue-300 transition-colors pt-1"
-                  >
-                    View families in CRM →
-                  </Link>
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      onClick={() => { setResult(null); setPreview(null); }}
+                      className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                    >
+                      Sync another label
+                    </button>
+                    <Link
+                      href="/crm"
+                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                    >
+                      View families in CRM →
+                    </Link>
+                  </div>
                 </div>
               )}
 

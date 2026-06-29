@@ -1,14 +1,20 @@
 import { createOAuth2Client, saveTokens } from '@/lib/google-auth';
 
+function browserBase(requestUrl: string): string {
+  const u = new URL(requestUrl);
+  // 0.0.0.0 is a server-side bind address; browsers must use localhost instead
+  if (u.hostname === '0.0.0.0') u.hostname = 'localhost';
+  return u.origin;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
   const error = searchParams.get('error');
+  const base = browserBase(request.url);
 
   if (error || !code) {
-    return Response.redirect(
-      new URL('/crm/google-sync?error=access_denied', request.url),
-    );
+    return Response.redirect(`${base}/crm/google-sync?error=access_denied`);
   }
 
   try {
@@ -19,10 +25,8 @@ export async function GET(request: Request) {
       refresh_token: tokens.refresh_token ?? '',
       expiry_date: tokens.expiry_date ?? 0,
     });
-    return Response.redirect(new URL('/crm/google-sync?connected=1', request.url));
+    return Response.redirect(`${base}/crm/google-sync?connected=1`);
   } catch {
-    return Response.redirect(
-      new URL('/crm/google-sync?error=token_exchange', request.url),
-    );
+    return Response.redirect(`${base}/crm/google-sync?error=token_exchange`);
   }
 }

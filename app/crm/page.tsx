@@ -66,6 +66,22 @@ function buildMessengerUrl(facebookProfileUrl: string): string {
   return `https://www.facebook.com/messages/t/${handle}`;
 }
 
+function buildGoogleContactsUrl(name: string) {
+  return `https://contacts.google.com/search/${encodeURIComponent(name)}`;
+}
+
+function buildGmailUrl(email: string | null, name: string) {
+  const query = email ? `from:${email} OR to:${email}` : name;
+  return `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(query)}`;
+}
+
+function labelColor(label: string): string {
+  const colors = ['#3B82F6', '#8B5CF6', '#EC4899', '#10B981', '#F59E0B', '#06B6D4'];
+  let hash = 0;
+  for (const c of label) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+  return colors[hash % colors.length];
+}
+
 // ── Stat card ─────────────────────────────────────────────────────────────────
 
 function StatCard({ label, value, icon: Icon }: { label: string; value: number; icon: React.ComponentType<{ className?: string }> }) {
@@ -107,7 +123,36 @@ function DetailPanel({
   const [deleting, setDeleting] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [whatsAppOpen, setWhatsAppOpen] = useState(false);
+  const [newLabel, setNewLabel] = useState('');
+  const [labels, setLabels] = useState<string[]>(family.labels ?? []);
+  const [labelSaving, setLabelSaving] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  async function saveLabels(next: string[]) {
+    setLabelSaving(true);
+    await fetch(`/api/crm/families/${family.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ labels: next }),
+    });
+    setLabelSaving(false);
+    onRefresh();
+  }
+
+  async function addLabel() {
+    const trimmed = newLabel.trim();
+    if (!trimmed || labels.includes(trimmed)) { setNewLabel(''); return; }
+    const next = [...labels, trimmed];
+    setLabels(next);
+    setNewLabel('');
+    await saveLabels(next);
+  }
+
+  async function removeLabel(lbl: string) {
+    const next = labels.filter((l) => l !== lbl);
+    setLabels(next);
+    await saveLabels(next);
+  }
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -297,6 +342,18 @@ function DetailPanel({
                 />
               )}
               <PopupButton
+                label="Google Contacts"
+                sublabel={`Search "${[family.father_first_name, family.mother_first_name, family.family_name].filter(Boolean).join(' / ')}"`}
+                url={buildGoogleContactsUrl(`${family.father_first_name ?? family.mother_first_name ?? ''} ${family.family_name}`.trim())}
+                color="#34A853"
+              />
+              <PopupButton
+                label="Gmail"
+                sublabel={family.email ? family.email : `Search "${family.family_name}"`}
+                url={buildGmailUrl(family.email, `${family.father_first_name ?? family.mother_first_name ?? ''} ${family.family_name}`.trim())}
+                color="#EA4335"
+              />
+              <PopupButton
                 label="Facebook Search"
                 sublabel={`"${family.family_name}"${family.city ? ` · ${family.city}` : ''}`}
                 url={buildFacebookUrl(family.family_name, family.city)}
@@ -330,6 +387,50 @@ function DetailPanel({
                   )}
                 </>
               )}
+            </div>
+          </div>
+
+          {/* Labels */}
+          <div className="px-5 py-3 border-b border-slate-800/80">
+            <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-2">
+              Labels {labelSaving && <span className="text-slate-700 normal-case">saving…</span>}
+            </p>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {labels.map((lbl) => (
+                <span
+                  key={lbl}
+                  className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                  style={{ backgroundColor: `${labelColor(lbl)}20`, color: labelColor(lbl), border: `1px solid ${labelColor(lbl)}40` }}
+                >
+                  {lbl}
+                  <button
+                    onClick={() => removeLabel(lbl)}
+                    className="opacity-60 hover:opacity-100 transition-opacity ml-0.5"
+                    aria-label={`Remove ${lbl}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {labels.length === 0 && (
+                <span className="text-[10px] text-slate-700 italic">No labels yet</span>
+              )}
+            </div>
+            <div className="flex gap-1.5">
+              <input
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addLabel(); } }}
+                placeholder="Add label…"
+                className="flex-1 text-[10px] px-2 py-1 bg-slate-800 border border-slate-700 rounded text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+              />
+              <button
+                onClick={addLabel}
+                disabled={!newLabel.trim()}
+                className="text-[10px] px-2 py-1 rounded border border-slate-700 text-slate-400 hover:border-blue-500 hover:text-blue-400 disabled:opacity-30 transition-colors"
+              >
+                Add
+              </button>
             </div>
           </div>
 
@@ -424,6 +525,7 @@ export default function CrmPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [ageFilter, setAgeFilter] = useState('');
+  const [labelFilter, setLabelFilter] = useState('');
   const [selectedFamily, setSelectedFamily] = useState<Family | null>(null);
   const [duplicateCount, setDuplicateCount] = useState(0);
 
@@ -441,6 +543,7 @@ export default function CrmPage() {
     if (search) params.set('search', search);
     if (statusFilter) params.set('status', statusFilter);
     if (ageFilter) params.set('child_age', ageFilter);
+    if (labelFilter) params.set('label', labelFilter);
 
     try {
       const res = await fetch(`/api/crm/families?${params}`);
@@ -452,7 +555,7 @@ export default function CrmPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter, ageFilter]);
+  }, [search, statusFilter, ageFilter, labelFilter]);
 
   useEffect(() => {
     const t = setTimeout(fetchFamilies, 250);
@@ -470,6 +573,7 @@ export default function CrmPage() {
 
   const totalChildren = families.reduce((s, f) => s + (f.children?.length ?? 0), 0);
   const activeCount = families.filter((f) => f.status === 'active').length;
+  const allLabels = Array.from(new Set(families.flatMap((f) => f.labels ?? []))).sort();
 
   return (
     <div className="h-full flex flex-col">
@@ -521,9 +625,25 @@ export default function CrmPage() {
             <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" />
           </div>
 
-          {(search || statusFilter || ageFilter) && (
+          {allLabels.length > 0 && (
+            <div className="relative">
+              <select
+                value={labelFilter}
+                onChange={(e) => setLabelFilter(e.target.value)}
+                className="appearance-none text-xs bg-slate-800 border border-slate-700 rounded pl-3 pr-7 py-2 text-slate-300 focus:outline-none focus:border-blue-500"
+              >
+                <option value="">All labels</option>
+                {allLabels.map((lbl) => (
+                  <option key={lbl} value={lbl}>{lbl}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" />
+            </div>
+          )}
+
+          {(search || statusFilter || ageFilter || labelFilter) && (
             <button
-              onClick={() => { setSearch(''); setStatusFilter(''); setAgeFilter(''); }}
+              onClick={() => { setSearch(''); setStatusFilter(''); setAgeFilter(''); setLabelFilter(''); }}
               className="text-xs px-3 py-2 rounded border border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600 transition-colors"
             >
               Clear
@@ -568,7 +688,7 @@ export default function CrmPage() {
                   <th className="px-4 py-3 font-medium">Family</th>
                   <th className="px-4 py-3 font-medium">Parents</th>
                   <th className="px-4 py-3 font-medium">Location</th>
-                  <th className="px-4 py-3 font-medium">Program</th>
+                  <th className="px-4 py-3 font-medium">Labels</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Children</th>
                 </tr>
@@ -608,7 +728,20 @@ export default function CrmPage() {
                       <td className="px-4 py-3 text-slate-400">
                         {[f.city, f.state_province].filter(Boolean).join(', ') || '—'}
                       </td>
-                      <td className="px-4 py-3 text-slate-400">{f.program || '—'}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {(f.labels ?? []).map((lbl) => (
+                            <span
+                              key={lbl}
+                              className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                              style={{ backgroundColor: `${labelColor(lbl)}20`, color: labelColor(lbl) }}
+                            >
+                              {lbl}
+                            </span>
+                          ))}
+                          {!f.labels?.length && <span className="text-slate-700">—</span>}
+                        </div>
+                      </td>
                       <td className="px-4 py-3">
                         <span className={STATUS_COLORS[f.status] ?? 'text-slate-400'}>
                           {f.status}

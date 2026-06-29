@@ -7,9 +7,10 @@ interface PopupButtonProps {
   sublabel: string;
   url: string;
   color: string;
+  icon?: React.ReactNode;
 }
 
-export default function PopupButton({ label, sublabel, url, color }: PopupButtonProps) {
+export default function PopupButton({ label, sublabel, url, color, icon }: PopupButtonProps) {
   function openPopup() {
     const w = 1100;
     const h = 720;
@@ -27,7 +28,7 @@ export default function PopupButton({ label, sublabel, url, color }: PopupButton
       onClick={openPopup}
       className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-slate-700/60 bg-slate-800/50 hover:bg-slate-700/60 hover:border-slate-600 transition-all group text-left"
     >
-      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+      {icon ?? <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />}
       <div className="min-w-0 flex-1">
         <div className="text-xs font-medium text-slate-200 group-hover:text-white leading-tight">
           {label}

@@ -1,4 +1,4 @@
-export type LayerType = 'synagogue' | 'day_school' | 'head_shliach' | 'population' | 'family';
+export type LayerType = 'synagogue' | 'chabad' | 'day_school' | 'head_shliach' | 'population' | 'family';
 
 export interface MapRecord {
   id: string;
@@ -38,6 +38,7 @@ export interface MapStats {
 
 export const LAYER_COLORS: Record<string, string> = {
   synagogue: '#3B82F6',
+  chabad: '#F59E0B',
   day_school: '#22C55E',
   head_shliach: '#8B5CF6',
   population: '#F97316',
@@ -46,6 +47,7 @@ export const LAYER_COLORS: Record<string, string> = {
 
 export const LAYER_LABELS: Record<LayerType, string> = {
   synagogue: 'Synagogue',
+  chabad: 'Chabad House',
   day_school: 'Day School',
   head_shliach: 'Head Shliach',
   population: 'Population',

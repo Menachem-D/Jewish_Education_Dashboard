@@ -1,104 +1,154 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
-import { ChevronDown, ChevronRight, List, Users } from 'lucide-react';
-import {
-  MapRecord,
-  LayerFilters,
-  MapStats,
-  LAYER_COLORS,
-  LAYER_LABELS,
-  LayerType,
-} from '@/types/map-record';
-import StatsCards from '@/components/cards/StatsCards';
+import { ChevronDown, ChevronRight, Users, Globe, Search, Download, AlertTriangle, Layers, Map } from 'lucide-react';
+import type { MapRecord } from '@/types/map-record';
+import { LAYER_COLORS } from '@/types/map-record';
+import type { Region } from '@/lib/regions-data';
+import { US_STATES, CA_PROVINCES, recordsInRegion } from '@/lib/regions-data';
+import type { GeoCity } from '@/lib/jewish-geo';
 import { cn } from '@/lib/utils';
 
-interface CommandSidebarProps {
-  stats: MapStats;
-  layerFilters: LayerFilters;
-  onLayerFiltersChange: (filters: LayerFilters) => void;
-  records: MapRecord[];
-  onSelectRecord: (record: MapRecord) => void;
-  selectedId?: string | null;
-  loading: boolean;
+interface LayerVisibility {
+  families:     boolean;
+  synagogue:    boolean;
+  chabad:       boolean;
+  day_school:   boolean;
+  head_shliach: boolean;
+  choropleth:   boolean;
 }
 
-const LAYER_ORDER: LayerType[] = ['synagogue', 'day_school', 'head_shliach', 'population', 'family'];
+interface CommandSidebarProps {
+  familyCount:         number;
+  allRecords:          MapRecord[];
+  onSelectRegion:      (region: Region) => void;
+  selectedRegionAbbr?: string | null;
+  loading:             boolean;
+  layers:              LayerVisibility;
+  onToggleLayer:       (key: keyof LayerVisibility) => void;
+  onExport:            () => void;
+  deserts:             GeoCity[];
+  onDesertSelect:      (city: GeoCity) => void;
+}
 
-function SectionHeader({
-  title,
-  count,
-  expanded,
-  onToggle,
+// ── Region row ──────────────────────────────────────────────────────────────
+
+function RegionRow({
+  region, count, isSelected, onClick,
 }: {
-  title: string;
-  count?: number;
-  expanded: boolean;
-  onToggle: () => void;
+  region: Region; count: number; isSelected: boolean; onClick: () => void;
 }) {
   return (
     <button
-      onClick={onToggle}
-      className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-widest text-slate-500 hover:text-slate-300 hover:bg-slate-700/20 transition-colors"
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded text-xs transition-all border',
+        isSelected
+          ? 'bg-blue-900/30 border-blue-500/40 ring-1 ring-blue-500/20 text-slate-100'
+          : count > 0
+          ? 'border-transparent hover:bg-slate-900/50 hover:border-slate-700/40 text-slate-300'
+          : 'border-transparent text-slate-600 hover:text-slate-500',
+      )}
     >
-      <div className="flex items-center gap-2">
-        <List className="w-3.5 h-3.5" />
-        <span>{title}</span>
-        {count !== undefined && (
-          <span className="bg-slate-700 text-slate-300 text-[10px] px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center leading-none">
-            {count}
-          </span>
-        )}
-      </div>
-      {expanded ? (
-        <ChevronDown className="w-3 h-3" />
-      ) : (
-        <ChevronRight className="w-3 h-3" />
+      <span
+        className="w-1.5 h-1.5 rounded-full shrink-0 transition-all"
+        style={{
+          backgroundColor: count > 0 ? (isSelected ? '#60A5FA' : '#475569') : '#2D3748',
+          boxShadow: isSelected ? '0 0 5px #60A5FA' : 'none',
+        }}
+      />
+      <span className="flex-1 text-left truncate font-medium">{region.name}</span>
+      <span className="text-[10px] text-slate-600 shrink-0">{region.abbr}</span>
+      {count > 0 && (
+        <span className="text-[10px] text-blue-400 tabular-nums font-semibold ml-0.5">{count}</span>
       )}
     </button>
   );
 }
 
+// ── Layer toggle row ────────────────────────────────────────────────────────
+
+function LayerRow({
+  label, colorKey, active, onToggle, count,
+}: {
+  label: string; colorKey: string; active: boolean; onToggle: () => void; count?: number;
+}) {
+  const color = LAYER_COLORS[colorKey] ?? '#94A3B8';
+  return (
+    <button
+      onClick={onToggle}
+      className={cn(
+        'w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded text-xs transition-all border',
+        active
+          ? 'border-transparent hover:bg-slate-900/40'
+          : 'border-transparent opacity-40 hover:opacity-60',
+      )}
+    >
+      <span
+        className="w-2.5 h-2.5 rounded-full shrink-0 transition-all border"
+        style={{
+          backgroundColor: active ? color : 'transparent',
+          borderColor: color,
+          boxShadow: active ? `0 0 6px ${color}60` : 'none',
+        }}
+      />
+      <span className="flex-1 text-left text-slate-300">{label}</span>
+      {count !== undefined && (
+        <span className="text-[10px] tabular-nums" style={{ color: active ? color : '#475569' }}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
+
 export default function CommandSidebar({
-  stats,
-  layerFilters,
-  onLayerFiltersChange,
-  records,
-  onSelectRecord,
-  selectedId,
+  familyCount,
+  allRecords,
+  onSelectRegion,
+  selectedRegionAbbr,
   loading,
+  layers,
+  onToggleLayer,
+  onExport,
+  deserts,
+  onDesertSelect,
 }: CommandSidebarProps) {
-  const [layersOpen, setLayersOpen] = useState(true);
-  const [recordsOpen, setRecordsOpen] = useState(true);
+  const [usOpen,      setUsOpen]      = useState(true);
+  const [caOpen,      setCaOpen]      = useState(false);
+  const [gapsOpen,    setGapsOpen]    = useState(false);
+  const [layersOpen,  setLayersOpen]  = useState(true);
+  const [search,      setSearch]      = useState('');
 
-  function toggleLayer(key: LayerType) {
-    onLayerFiltersChange({ ...layerFilters, [key]: !layerFilters[key] });
+  function countForRegion(region: Region) {
+    return recordsInRegion(allRecords, region).length;
   }
 
-  function toggleAll(value: boolean) {
-    onLayerFiltersChange({
-      synagogue: value,
-      day_school: value,
-      head_shliach: value,
-      population: value,
-      family: value,
-    });
-  }
+  const sortedStates    = useMemo(() => [...US_STATES].sort((a, b) => countForRegion(b) - countForRegion(a)), [allRecords]);
+  const sortedProvinces = useMemo(() => [...CA_PROVINCES].sort((a, b) => countForRegion(b) - countForRegion(a)), [allRecords]);
 
-  const allOn = LAYER_ORDER.every((k) => layerFilters[k]);
-  const allOff = LAYER_ORDER.every((k) => !layerFilters[k]);
+  const usActive = sortedStates.filter((r)    => countForRegion(r) > 0).length;
+  const caActive = sortedProvinces.filter((r) => countForRegion(r) > 0).length;
 
-  // Group visible records by layer for the list
-  const byLayer = LAYER_ORDER.reduce<Record<string, MapRecord[]>>((acc, key) => {
-    acc[key] = records.filter((r) => r.layer_type === key);
-    return acc;
-  }, {});
+  const filteredStates = useMemo(() => {
+    if (!search.trim()) return sortedStates;
+    const q = search.toLowerCase();
+    return sortedStates.filter((r) => r.name.toLowerCase().includes(q) || r.abbr.toLowerCase().includes(q));
+  }, [search, sortedStates]);
+
+  const filteredProvinces = useMemo(() => {
+    if (!search.trim()) return sortedProvinces;
+    const q = search.toLowerCase();
+    return sortedProvinces.filter((r) => r.name.toLowerCase().includes(q) || r.abbr.toLowerCase().includes(q));
+  }, [search, sortedProvinces]);
 
   return (
-    <div className="w-80 shrink-0 bg-slate-800 border-r border-slate-700/80 flex flex-col h-full overflow-hidden">
+    <div className="w-72 shrink-0 bg-slate-800 border-r border-slate-700/80 flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-700/80 bg-slate-900/60">
+      <div className="px-4 py-3 border-b border-slate-700/80 bg-slate-900/60 shrink-0">
         <div className="flex items-center gap-2 mb-0.5">
           <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
           <h1 className="text-xs font-bold text-slate-100 tracking-widest uppercase">
@@ -108,171 +158,223 @@ export default function CommandSidebar({
         <p className="text-[10px] text-slate-600 pl-4">Command &amp; Intelligence Map</p>
       </div>
 
-      {/* Stats */}
-      <StatsCards stats={stats} />
+      {/* Search */}
+      <div className="px-3 py-2 border-b border-slate-700/40 shrink-0">
+        <div className="flex items-center gap-2 bg-slate-900/50 border border-slate-700/50 rounded-lg px-2.5 py-1.5">
+          <Search className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+          <input
+            type="text"
+            placeholder="Search states, provinces…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="flex-1 bg-transparent text-xs text-slate-200 placeholder-slate-600 outline-none min-w-0"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="text-slate-600 hover:text-slate-400 text-xs">✕</button>
+          )}
+        </div>
+      </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="h-px bg-slate-700/40" />
+      <div className="flex-1 overflow-y-auto min-h-0 flex flex-col">
 
-        {/* ── Layer toggles ── */}
-        <button
-          onClick={() => setLayersOpen((v) => !v)}
-          className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-widest text-slate-500 hover:text-slate-300 hover:bg-slate-700/20 transition-colors"
-        >
-          <span>Layers</span>
-          {layersOpen ? (
-            <ChevronDown className="w-3 h-3" />
-          ) : (
-            <ChevronRight className="w-3 h-3" />
-          )}
-        </button>
+        {/* ── Map Layers ── */}
+        <div className="border-b border-slate-700/40">
+          <button
+            onClick={() => setLayersOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-semibold uppercase tracking-widest text-slate-500 hover:text-slate-400 transition-colors"
+          >
+            <span className="flex items-center gap-1.5">
+              <Layers className="w-3 h-3" />
+              Map Layers
+            </span>
+            {layersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          </button>
 
-        {layersOpen && (
-          <div className="px-3 pb-3 space-y-1.5">
-            {LAYER_ORDER.map((key) => {
-              const color = LAYER_COLORS[key];
-              const active = layerFilters[key];
-              const count = records.filter((r) => r.layer_type === key).length;
-
-              return (
-                <button
-                  key={key}
-                  onClick={() => toggleLayer(key)}
-                  className={cn(
-                    'w-full flex items-center gap-2.5 px-2.5 py-2 rounded border text-xs transition-all',
-                    active
-                      ? 'border-transparent bg-slate-900/60'
-                      : 'border-transparent bg-transparent opacity-40 hover:opacity-60',
-                  )}
-                >
-                  {/* Color swatch / toggle indicator */}
-                  <span
-                    className="w-3 h-3 rounded-full shrink-0 transition-all"
-                    style={{
-                      backgroundColor: active ? color : '#475569',
-                      boxShadow: active ? `0 0 6px ${color}80` : 'none',
-                    }}
-                  />
-                  <span className="text-slate-200 flex-1 text-left font-medium">
-                    {LAYER_LABELS[key]}
-                  </span>
-                  <span className="text-[10px] tabular-nums text-slate-500">
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-
-            {/* All on / off */}
-            <div className="flex gap-1.5 pt-0.5">
+          {layersOpen && (
+            <div className="px-2 pb-2 space-y-0.5">
+              <LayerRow
+                label="Families (CRM)"
+                colorKey="family"
+                active={layers.families}
+                onToggle={() => onToggleLayer('families')}
+                count={familyCount}
+              />
+              <LayerRow
+                label="Synagogues"
+                colorKey="synagogue"
+                active={layers.synagogue}
+                onToggle={() => onToggleLayer('synagogue')}
+              />
+              <LayerRow
+                label="Chabad Houses"
+                colorKey="chabad"
+                active={layers.chabad}
+                onToggle={() => onToggleLayer('chabad')}
+              />
+              <LayerRow
+                label="Day Schools"
+                colorKey="day_school"
+                active={layers.day_school}
+                onToggle={() => onToggleLayer('day_school')}
+              />
+              <LayerRow
+                label="Head Shluchim"
+                colorKey="head_shliach"
+                active={layers.head_shliach}
+                onToggle={() => onToggleLayer('head_shliach')}
+              />
+              {/* Choropleth toggle */}
               <button
-                onClick={() => toggleAll(true)}
-                disabled={allOn}
-                className="flex-1 text-[10px] py-1 rounded border border-slate-700/60 text-slate-500 hover:text-slate-300 hover:border-slate-600 disabled:opacity-30 transition-colors"
+                onClick={() => onToggleLayer('choropleth')}
+                className={cn(
+                  'w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded text-xs transition-all border border-transparent',
+                  layers.choropleth ? '' : 'opacity-40 hover:opacity-60',
+                )}
               >
-                Show all
-              </button>
-              <button
-                onClick={() => toggleAll(false)}
-                disabled={allOff}
-                className="flex-1 text-[10px] py-1 rounded border border-slate-700/60 text-slate-500 hover:text-slate-300 hover:border-slate-600 disabled:opacity-30 transition-colors"
-              >
-                Hide all
+                <span
+                  className="w-2.5 h-2.5 rounded shrink-0 border"
+                  style={{
+                    background: layers.choropleth
+                      ? 'linear-gradient(to right, rgba(59,130,246,0.2), rgba(59,130,246,0.7))'
+                      : 'transparent',
+                    borderColor: '#3B82F6',
+                  }}
+                />
+                <span className="flex-1 text-left text-slate-300">Population Choropleth</span>
+                <Map className="w-3 h-3 text-slate-600" />
               </button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        <div className="h-px bg-slate-700/40" />
+        {/* ── Coverage Deserts ── */}
+        {deserts.length > 0 && (
+          <div className="border-b border-slate-700/40">
+            <button
+              onClick={() => setGapsOpen((v) => !v)}
+              className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-semibold uppercase tracking-widest hover:text-slate-400 transition-colors"
+              style={{ color: '#EF4444' }}
+            >
+              <span className="flex items-center gap-1.5">
+                <AlertTriangle className="w-3 h-3" />
+                Coverage Gaps
+                <span className="ml-1 bg-red-900/40 text-red-400 rounded px-1">{deserts.length}</span>
+              </span>
+              {gapsOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            </button>
 
-        {/* ── Records list ── */}
-        <SectionHeader
-          title="Records"
-          count={records.length}
-          expanded={recordsOpen}
-          onToggle={() => setRecordsOpen((v) => !v)}
-        />
-
-        {recordsOpen && (
-          <div className="px-3 pb-4">
-            {loading ? (
-              <div className="py-4 text-center text-xs text-slate-600">
-                Loading records...
-              </div>
-            ) : records.length === 0 ? (
-              <div className="py-4 text-center text-xs text-slate-600">
-                No records visible — check layer filters
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {LAYER_ORDER.filter(
-                  (key) => layerFilters[key] && byLayer[key].length > 0,
-                ).map((key) => (
-                  <div key={key}>
-                    {/* Layer group header */}
-                    <div
-                      className="text-[10px] font-semibold uppercase tracking-wider py-1 mb-0.5"
-                      style={{ color: LAYER_COLORS[key] }}
-                    >
-                      {LAYER_LABELS[key]} ({byLayer[key].length})
-                    </div>
-
-                    <div className="space-y-0.5">
-                      {byLayer[key].map((rec) => {
-                        const color = LAYER_COLORS[rec.layer_type];
-                        const isSelected = selectedId === rec.id;
-
-                        return (
-                          <button
-                            key={rec.id}
-                            onClick={() => onSelectRecord(rec)}
-                            className={cn(
-                              'w-full text-left rounded px-2 py-1.5 transition-all border',
-                              isSelected
-                                ? 'bg-blue-900/30 border-blue-500/40 ring-1 ring-blue-500/20'
-                                : 'bg-transparent border-transparent hover:bg-slate-900/40 hover:border-slate-700/40',
-                            )}
-                          >
-                            <div className="flex items-center gap-1.5">
-                              <span
-                                className="w-1.5 h-1.5 rounded-full shrink-0"
-                                style={{ backgroundColor: color }}
-                              />
-                              <span className="text-xs text-slate-200 truncate leading-tight">
-                                {rec.name}
-                              </span>
-                            </div>
-                            <div className="pl-3 text-[10px] text-slate-500 truncate mt-0.5">
-                              {[rec.city, rec.state_province]
-                                .filter(Boolean)
-                                .join(', ')}
-                              {rec.layer_type === 'population' &&
-                                rec.population != null && (
-                                  <span className="ml-1.5 text-orange-400 font-medium">
-                                    {rec.population.toLocaleString()}
-                                  </span>
-                                )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+            {gapsOpen && (
+              <div className="px-2 pb-2 space-y-0.5 max-h-40 overflow-y-auto">
+                <div className="text-[9px] text-slate-600 px-1 mb-1">
+                  Cities with Jewish children but no day school
+                </div>
+                {deserts.map((city) => (
+                  <button
+                    key={`${city.city}-${city.state}`}
+                    onClick={() => onDesertSelect(city)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1 rounded text-xs hover:bg-red-900/10 border border-transparent hover:border-red-900/30 transition-all text-left"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                    <span className="flex-1 truncate text-slate-300">{city.city}, {city.state}</span>
+                    <span className="text-[9px] text-red-400 tabular-nums shrink-0">
+                      {city.jewish_child_population != null
+                        ? `${Math.round(city.jewish_child_population / 1000 * 10) / 10}k kids`
+                        : ''}
+                    </span>
+                  </button>
                 ))}
               </div>
             )}
           </div>
         )}
+
+        {/* ── Regions ── */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
+            <Globe className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              Regions
+            </span>
+          </div>
+
+          {/* United States */}
+          <button
+            onClick={() => setUsOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600 hover:text-slate-400 transition-colors"
+          >
+            <span>
+              United States
+              {!search && usActive > 0 && (
+                <span className="ml-1.5 text-blue-500">{usActive} active</span>
+              )}
+            </span>
+            {usOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          </button>
+
+          {(usOpen || search) && (
+            <div className="px-2 pb-1 space-y-0.5">
+              {filteredStates.map((region) => (
+                <RegionRow
+                  key={region.abbr}
+                  region={region}
+                  count={countForRegion(region)}
+                  isSelected={selectedRegionAbbr === region.abbr}
+                  onClick={() => onSelectRegion(region)}
+                />
+              ))}
+              {filteredStates.length === 0 && search && (
+                <div className="text-[10px] text-slate-600 px-2.5 py-1">No states match</div>
+              )}
+            </div>
+          )}
+
+          {/* Canada */}
+          <button
+            onClick={() => setCaOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600 hover:text-slate-400 transition-colors mt-2"
+          >
+            <span>
+              Canada
+              {!search && caActive > 0 && (
+                <span className="ml-1.5 text-blue-500">{caActive} active</span>
+              )}
+            </span>
+            {caOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          </button>
+
+          {(caOpen || search) && (
+            <div className="px-2 pb-3 space-y-0.5">
+              {filteredProvinces.map((region) => (
+                <RegionRow
+                  key={region.abbr}
+                  region={region}
+                  count={countForRegion(region)}
+                  isSelected={selectedRegionAbbr === region.abbr}
+                  onClick={() => onSelectRegion(region)}
+                />
+              ))}
+            </div>
+          )}
+
+          <div className="h-4" />
+        </div>
       </div>
 
-      {/* CRM link */}
-      <div className="shrink-0 border-t border-slate-700/40 px-3 py-2.5">
+      {/* Footer */}
+      <div className="shrink-0 border-t border-slate-700/40 px-3 py-2.5 space-y-2">
+        <button
+          onClick={onExport}
+          className="w-full flex items-center gap-2 text-[10px] text-slate-500 hover:text-green-400 transition-colors group"
+        >
+          <Download className="w-3.5 h-3.5 group-hover:text-green-400" />
+          <span className="uppercase tracking-wider">Export CRM CSV</span>
+        </button>
         <Link
           href="/crm"
           className="flex items-center gap-2 text-[10px] text-slate-500 hover:text-slate-300 transition-colors group"
         >
-          <Users className="w-3.5 h-3.5 group-hover:text-blue-400" />
+          <Users className="w-3.5 h-3.5 group-hover:text-pink-400" />
           <span className="uppercase tracking-wider">Family CRM</span>
         </Link>
       </div>

@@ -8,6 +8,7 @@ export async function GET(request: Request) {
     search: searchParams.get('search') || undefined,
     status: searchParams.get('status') || undefined,
     child_age: childAge ? parseInt(childAge, 10) : undefined,
+    label: searchParams.get('label') || undefined,
   });
 
   return Response.json(families);

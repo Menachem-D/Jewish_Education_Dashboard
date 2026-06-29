@@ -24,9 +24,25 @@ export async function GET() {
   }
 }
 
-/** POST — syncs contacts from a given contact group into the CRM */
+export interface PreviewRow {
+  action: 'create' | 'update' | 'skip';
+  family_name: string;
+  father_first_name: string | null;
+  mother_first_name: string | null;
+  email: string | null;
+  phone: string | null;
+  city: string | null;
+  state_province: string | null;
+  // only present for 'update'
+  existing_id?: string;
+  patch?: Record<string, string>;
+  skip_reason?: string;
+}
+
+/** POST — preview (dry_run=true) or commit sync from a given contact group */
 export async function POST(request: Request) {
-  const { resourceName } = await request.json();
+  const body = await request.json() as { resourceName: string; dry_run?: boolean };
+  const { resourceName, dry_run = false } = body;
   if (!resourceName) return Response.json({ error: 'resourceName required' }, { status: 400 });
 
   const client = await getAuthedClient();
@@ -37,7 +53,13 @@ export async function POST(request: Request) {
   // 1. Get member resource names from the group (up to 1000)
   const groupRes = await people.contactGroups.get({ resourceName, maxMembers: 1000 });
   const memberNames = groupRes.data.memberResourceNames ?? [];
-  if (memberNames.length === 0) return Response.json({ created: 0, updated: 0, skipped: 0 });
+  if (memberNames.length === 0) {
+    return Response.json(
+      dry_run
+        ? { preview: [], total: 0 }
+        : { created: 0, updated: 0, skipped: 0, total: 0 },
+    );
+  }
 
   // 2. Batch-fetch person details (People API max 200 per request)
   const personFields = 'names,emailAddresses,phoneNumbers,addresses,biographies,organizations,relations';
@@ -54,15 +76,21 @@ export async function POST(request: Request) {
     }
   }
 
-  // 3. Sync each contact into the CRM
+  // 3. Plan what each contact would do
+  const allFamilies = db.listFamilies({});
+  const preview: PreviewRow[] = [];
   let created = 0, updated = 0, skipped = 0;
 
   for (const person of contacts) {
     const mapped = mapPerson(person);
-    if (!mapped.family_name) { skipped++; continue; }
 
-    // Match by email or phone to detect existing family
-    const existing = db.listFamilies({}).find(
+    if (!mapped.family_name) {
+      preview.push({ action: 'skip', family_name: '(unnamed)', father_first_name: null, mother_first_name: null, email: mapped.email, phone: mapped.phone, city: null, state_province: null, skip_reason: 'No family name' });
+      skipped++;
+      continue;
+    }
+
+    const existing = allFamilies.find(
       (f) =>
         (mapped.email && f.email && f.email.toLowerCase() === mapped.email.toLowerCase()) ||
         (mapped.phone &&
@@ -72,25 +100,30 @@ export async function POST(request: Request) {
     );
 
     if (existing) {
-      // Patch only null/empty fields — never overwrite existing data
-      const patch: Record<string, unknown> = {};
+      const patch: Record<string, string> = {};
       for (const [k, v] of Object.entries(mapped) as [string, string | null][]) {
         if (v != null && v !== '' && (existing as unknown as Record<string, unknown>)[k] == null) {
           patch[k] = v;
         }
       }
       if (Object.keys(patch).length > 0) {
-        db.updateFamily(existing.id, patch);
+        preview.push({ action: 'update', family_name: existing.family_name, father_first_name: existing.father_first_name, mother_first_name: existing.mother_first_name, email: existing.email, phone: existing.phone, city: existing.city, state_province: existing.state_province, existing_id: existing.id, patch });
+        if (!dry_run) db.updateFamily(existing.id, patch);
         updated++;
       } else {
+        preview.push({ action: 'skip', family_name: existing.family_name, father_first_name: existing.father_first_name, mother_first_name: existing.mother_first_name, email: existing.email, phone: existing.phone, city: existing.city, state_province: existing.state_province, skip_reason: 'Already up to date' });
         skipped++;
       }
     } else {
-      db.createFamily(mapped);
+      preview.push({ action: 'create', family_name: mapped.family_name!, father_first_name: mapped.father_first_name ?? null, mother_first_name: mapped.mother_first_name ?? null, email: mapped.email ?? null, phone: mapped.phone ?? null, city: mapped.city ?? null, state_province: mapped.state_province ?? null });
+      if (!dry_run) db.createFamily(mapped);
       created++;
     }
   }
 
+  if (dry_run) {
+    return Response.json({ preview, total: contacts.length, created, updated, skipped });
+  }
   return Response.json({ created, updated, skipped, total: contacts.length });
 }
 
@@ -107,13 +140,13 @@ function mapPerson(p: people_v1.Schema$Person): Record<string, string | null> {
   const familyName = primaryName?.familyName?.trim() ?? '';
   const givenName = primaryName?.givenName?.trim() ?? null;
 
-  // Try to detect spouse from relations or multiple names
-  let fatherFirst: string | null = givenName;
-  let motherFirst: string | null = null;
+  // Treat the primary contact name as the mother; spouse relation (if present) becomes father
+  let motherFirst: string | null = givenName;
+  let fatherFirst: string | null = null;
   const spouseRelation = p.relations?.find(
     (r) => r.person && ['spouse', 'wife', 'husband', 'partner'].includes((r.type ?? '').toLowerCase()),
   );
-  if (spouseRelation?.person) motherFirst = spouseRelation.person.trim() || null;
+  if (spouseRelation?.person) fatherFirst = spouseRelation.person.trim() || null;
 
   const addr = p.addresses?.[0];
 

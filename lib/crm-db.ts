@@ -82,10 +82,20 @@ function withChildren(family: Omit<Family, 'children'>, children: Child[]): Fami
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+export function getAllLabels(): string[] {
+  const { families } = read();
+  const set = new Set<string>();
+  for (const f of families) {
+    for (const label of f.labels ?? []) set.add(label);
+  }
+  return Array.from(set).sort();
+}
+
 export function listFamilies(opts: {
   search?: string;
   status?: string;
   child_age?: number;
+  label?: string;
 }): Family[] {
   const { families, children } = read();
 
@@ -102,6 +112,11 @@ export function listFamilies(opts: {
 
   if (opts.status) {
     result = result.filter((f) => f.status === opts.status);
+  }
+
+  if (opts.label) {
+    const lbl = opts.label;
+    result = result.filter((f) => f.labels?.includes(lbl));
   }
 
   const enriched = result
@@ -296,6 +311,15 @@ export function findDuplicates(): DuplicatePair[] {
       ) {
         score += 25;
         reasons.push('Same father name');
+      }
+
+      if (
+        f1.mother_first_name &&
+        f2.mother_first_name &&
+        f1.mother_first_name.toLowerCase() === f2.mother_first_name.toLowerCase()
+      ) {
+        score += 25;
+        reasons.push('Same mother name');
       }
 
       if (score >= 55) {
