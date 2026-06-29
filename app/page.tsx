@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type ElementType } from 'react';
 import dynamic from 'next/dynamic';
+import { Map, Package } from 'lucide-react';
 import type { MapRecord } from '@/types/map-record';
 import type { Region } from '@/lib/regions-data';
 import { US_STATES, CA_PROVINCES, recordsInRegion } from '@/lib/regions-data';
@@ -10,6 +11,9 @@ import CommandSidebar from '@/components/sidebar/CommandSidebar';
 import FamilyMapPanel from '@/components/FamilyMapPanel';
 import RegionPanel from '@/components/RegionPanel';
 import StatsBar from '@/components/StatsBar';
+import StoreView from '@/components/store/StoreView';
+
+type AppView = 'map' | 'store';
 
 const DispatchMap = dynamic(() => import('@/components/map/DispatchMap'), {
   ssr: false,
@@ -83,6 +87,7 @@ function exportFamiliesToCSV(records: MapRecord[]) {
 }
 
 export default function DashboardPage() {
+  const [view, setView] = useState<AppView>('map');
   const [familyRecords, setFamilyRecords] = useState<MapRecord[]>([]);
   const [loadingFamilies, setLoadingFamilies] = useState(true);
   const [geoMarkers, setGeoMarkers]   = useState<MapRecord[]>([]);
@@ -191,96 +196,135 @@ export default function DashboardPage() {
     exportFamiliesToCSV(familyRecords);
   }, [familyRecords]);
 
+  const NAV_TABS: { id: AppView; label: string; Icon: ElementType }[] = [
+    { id: 'map',   label: 'Dispatch Map', Icon: Map },
+    { id: 'store', label: 'Store',        Icon: Package },
+  ];
+
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-900 text-slate-100 relative">
-      {/* Mobile overlay backdrop */}
-      {sidebarOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-20 bg-black/50"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
+    <div className="flex flex-col h-screen overflow-hidden bg-slate-900 text-slate-100">
 
-      {/* Sidebar — hidden on mobile until toggled */}
-      <div className={`
-        fixed md:relative inset-y-0 left-0 z-30
-        transform transition-transform duration-200
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-        flex shrink-0
-      `}>
-      <CommandSidebar
-        familyCount={familyRecords.length}
-        allRecords={allRecords}
-        onSelectRegion={handleRegionSelect}
-        selectedRegionAbbr={selectedRegion?.abbr ?? null}
-        loading={loadingFamilies}
-        layers={layers}
-        onToggleLayer={toggleLayer}
-        onExport={handleExport}
-        deserts={geoStats?.deserts ?? []}
-        onDesertSelect={handleDesertSelect}
-      />
-      </div>
+      {/* Top navigation bar */}
+      <div className="flex items-center gap-1 px-4 py-2 bg-slate-950 border-b border-slate-800 shrink-0">
+        {/* Brand */}
+        <span className="text-xs font-semibold text-slate-400 tracking-widest uppercase mr-4 hidden sm:block">
+          Jewish Dispatch
+        </span>
 
-      <div className="flex-1 relative overflow-hidden flex flex-col min-w-0">
-        {/* Executive summary stats strip */}
-        <StatsBar
-          totalJewishPop={geoStats?.totalJewishPop  ?? 0}
-          totalChildPop={geoStats?.totalChildPop    ?? 0}
-          totalSynagogues={geoStats?.totalSynagogues ?? 0}
-          totalChabad={geoStats?.totalChabad        ?? 0}
-          totalSchools={geoStats?.totalSchools       ?? 0}
-          usCityCount={geoStats?.usCityCount        ?? 0}
-          caCityCount={geoStats?.caCityCount        ?? 0}
-          familyCount={familyRecords.length}
-          loading={statsLoading}
-        />
-
-        <div className="flex-1 relative overflow-hidden">
-          {/* Mobile hamburger */}
-          <button
-            onClick={() => setSidebarOpen((v) => !v)}
-            className="md:hidden absolute top-3 left-3 z-10 bg-slate-800/90 border border-slate-700/60 rounded-lg p-2 text-slate-300 hover:text-slate-100 shadow-lg"
-            aria-label="Toggle sidebar"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <rect y="2" width="16" height="2" rx="1" />
-              <rect y="7" width="16" height="2" rx="1" />
-              <rect y="12" width="16" height="2" rx="1" />
-            </svg>
-          </button>
-
-          {error && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-red-900/80 border border-red-700 text-red-200 text-xs px-3 py-1.5 rounded-full shadow-lg">
-              Data error: {error}
-            </div>
-          )}
-
-          <DispatchMap
-            records={visibleFamilies}
-            instRecords={visibleInstRecords}
-            layerVisibility={layers}
-            choroplethData={choroplethData}
-            onSelectRecord={handleFamilySelect}
-            selectedId={selectedFamily?.id ?? null}
-            flyToTarget={flyToTarget}
-          />
-
-          {selectedRegion ? (
-            <RegionPanel
-              region={selectedRegion}
-              records={recordsInRegion(allRecords, selectedRegion)}
-              onClose={() => setSelectedRegion(null)}
-            />
-          ) : selectedFamily?.layer_type === 'family' && selectedFamily.family_record_id ? (
-            <FamilyMapPanel
-              key={selectedFamily.id}
-              familyId={selectedFamily.family_record_id}
-              onClose={() => setSelectedFamily(null)}
-            />
-          ) : null}
+        {/* Tab switcher */}
+        <div className="flex items-center gap-0.5 bg-slate-800/60 rounded-lg p-0.5">
+          {NAV_TABS.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => setView(id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                view === id
+                  ? 'bg-slate-700 text-slate-100 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Icon size={12} />
+              {label}
+            </button>
+          ))}
         </div>
       </div>
+
+      {/* Content area */}
+      {view === 'store' ? (
+        <StoreView />
+      ) : (
+        <div className="flex flex-1 overflow-hidden relative">
+          {/* Mobile overlay backdrop */}
+          {sidebarOpen && (
+            <div
+              className="md:hidden fixed inset-0 z-20 bg-black/50"
+              onClick={() => setSidebarOpen(false)}
+            />
+          )}
+
+          {/* Sidebar */}
+          <div className={`
+            fixed md:relative inset-y-0 left-0 z-30
+            transform transition-transform duration-200
+            ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+            flex shrink-0
+          `}>
+            <CommandSidebar
+              familyCount={familyRecords.length}
+              allRecords={allRecords}
+              onSelectRegion={handleRegionSelect}
+              selectedRegionAbbr={selectedRegion?.abbr ?? null}
+              loading={loadingFamilies}
+              layers={layers}
+              onToggleLayer={toggleLayer}
+              onExport={handleExport}
+              deserts={geoStats?.deserts ?? []}
+              onDesertSelect={handleDesertSelect}
+            />
+          </div>
+
+          <div className="flex-1 relative overflow-hidden flex flex-col min-w-0">
+            {/* Executive summary stats strip */}
+            <StatsBar
+              totalJewishPop={geoStats?.totalJewishPop  ?? 0}
+              totalChildPop={geoStats?.totalChildPop    ?? 0}
+              totalSynagogues={geoStats?.totalSynagogues ?? 0}
+              totalChabad={geoStats?.totalChabad        ?? 0}
+              totalSchools={geoStats?.totalSchools       ?? 0}
+              usCityCount={geoStats?.usCityCount        ?? 0}
+              caCityCount={geoStats?.caCityCount        ?? 0}
+              familyCount={familyRecords.length}
+              loading={statsLoading}
+            />
+
+            <div className="flex-1 relative overflow-hidden">
+              {/* Mobile hamburger */}
+              <button
+                onClick={() => setSidebarOpen((v) => !v)}
+                className="md:hidden absolute top-3 left-3 z-10 bg-slate-800/90 border border-slate-700/60 rounded-lg p-2 text-slate-300 hover:text-slate-100 shadow-lg"
+                aria-label="Toggle sidebar"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                  <rect y="2" width="16" height="2" rx="1" />
+                  <rect y="7" width="16" height="2" rx="1" />
+                  <rect y="12" width="16" height="2" rx="1" />
+                </svg>
+              </button>
+
+              {error && (
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-red-900/80 border border-red-700 text-red-200 text-xs px-3 py-1.5 rounded-full shadow-lg">
+                  Data error: {error}
+                </div>
+              )}
+
+              <DispatchMap
+                records={visibleFamilies}
+                instRecords={visibleInstRecords}
+                layerVisibility={layers}
+                choroplethData={choroplethData}
+                onSelectRecord={handleFamilySelect}
+                selectedId={selectedFamily?.id ?? null}
+                flyToTarget={flyToTarget}
+              />
+
+              {selectedRegion ? (
+                <RegionPanel
+                  region={selectedRegion}
+                  records={recordsInRegion(allRecords, selectedRegion)}
+                  onClose={() => setSelectedRegion(null)}
+                />
+              ) : selectedFamily?.layer_type === 'family' && selectedFamily.family_record_id ? (
+                <FamilyMapPanel
+                  key={selectedFamily.id}
+                  familyId={selectedFamily.family_record_id}
+                  onClose={() => setSelectedFamily(null)}
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
